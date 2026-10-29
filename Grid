@@ -1,0 +1,375 @@
+class Grid:
+    # ↑ → ↓ ←
+    DIR4 = [
+        (-1, 0),
+        (0, 1),
+        (1, 0),
+        (0, -1)
+    ]
+
+    DIR8 = DIR4 + [
+        (-1, -1),
+        (-1, 1),
+        (1, 1),
+        (1, -1)
+    ]
+
+    def __init__(self, grid=None, h=None, w=None, fill="."):
+        if grid is not None:
+            self.g = grid
+        else:
+            self.g = [
+                [fill] * w
+                for _ in range(h)
+            ]
+        self.h = len(self.g)
+        self.w = len(self.g[0])
+        self.Y,self.X = 0,0
+    # =================================
+    # iterable
+    # =================================
+
+    def __iter__(self):
+        for y in range(self.h):
+            for x in range(self.w):
+                yield y, x
+
+    # =================================
+    # numpy-like access
+    # =================================
+    def __getitem__(self, key):
+        y, x = key
+        ys = (
+            range(*y.indices(self.h))
+            if isinstance(y, slice)
+            else [y]
+        )
+        xs = (
+            range(*x.indices(self.w))
+            if isinstance(x, slice)
+            else [x]
+        )
+        res = [
+            [self.g[i][j] for j in xs]
+            for i in ys
+        ]
+        if not isinstance(y, slice) and not isinstance(x, slice):
+            return res[0][0]
+        if not isinstance(y, slice):
+            return res[0]
+        if not isinstance(x, slice):
+            return [row[0] for row in res]
+        return res
+
+    def __setitem__(self, key, value):
+        y, x = key
+        ys = (
+            range(*y.indices(self.h))
+            if isinstance(y, slice)
+            else [y]
+        )
+        xs = (
+            range(*x.indices(self.w))
+            if isinstance(x, slice)
+            else [x]
+        )
+        for i in ys:
+            for j in xs:
+                self.g[i][j] = value
+
+    # =================================
+    # basic
+    # =================================
+    def bounding_box(self, value):
+        pos = self.find(value)
+        if not pos:
+            return None
+
+        ys = [y for y, _ in pos]
+        xs = [x for _, x in pos]
+
+        return (
+            min(ys),
+            max(ys),
+            min(xs),
+            max(xs),
+        )
+
+    def in_bounds(self, y, x, wall=None):
+        return (
+            0 <= y < self.h
+            and
+            0 <= x < self.w
+            and
+            self.g[y][x] != wall
+        )
+
+    def wrap(self, y, x):
+        return (
+            y % self.h,
+            x % self.w
+        )
+
+    def cells(self):
+        for y, x in self:
+            yield y, x, self.g[y][x]
+
+    # =================================
+    # search
+    # =================================
+
+    def count(self, value):
+        return sum(
+            row.count(value)
+            for row in self.g
+        )
+
+    def find(self, value):
+        return [
+            (y, x)
+            for y, x in self
+            if self.g[y][x] == value
+        ]
+
+    def find_one(self, value):
+        for y, x in self:
+            if self.g[y][x] == value:
+                return y, x
+        return None
+
+    def where(self, cond):
+        return [
+            (y, x)
+            for y, x in self
+            if cond(self.g[y][x])
+        ]
+
+    # =================================
+    # movement
+    # =================================
+
+    def neighbors(self, y, x, dirs=None, dist=1, wall=None):
+        if dirs is None:
+            dirs = self.DIR4
+        for dy, dx in dirs:
+            ny = y + dy * dist
+            nx = x + dx * dist
+            if self.in_bounds(ny, nx, wall):
+                yield ny, nx
+
+    def around(self, y, x, dirs=None):
+        if dirs is None:
+            dirs = self.DIR4
+        for dy, dx in dirs:
+            ny = y + dy
+            nx = x + dx
+            if 0 <= ny < self.h and 0 <= nx < self.w:
+                yield ny, nx
+    
+    def line(self, y, x, dy, dx, dist=None):
+        k = 1
+        while True:
+            if dist is not None and k > dist:
+                break
+            ny = y + dy * k
+            nx = x + dx * k
+            if not self.in_bounds(ny, nx):
+                break
+            yield ny, nx
+            k += 1
+
+    def ray(self, y, x, dirs=None, dist=None):
+        if dirs is None:
+            dirs = self.DIR4
+        return [
+            list(self.line(y, x, dy, dx, dist))
+            for dy, dx in dirs
+        ]
+
+    def ray_val(self, y, x, dirs=None, dist=None):
+        res = []
+        for line in self.ray(y, x, dirs, dist):
+            res.append(
+                [self[ny, nx] for ny, nx in line]
+            )
+        return res
+
+    # =================================
+    # simulation
+    # =================================
+
+    @staticmethod
+    def rot_dir(d, k=1):
+        return (d + k) % 4
+
+    def setxy(self, y, x):
+        self.Y = y
+        self.X = x
+
+    def move(self, dy, dx, wall=None):
+        if self.in_bounds(self.Y+dy,self.X+dx,wall):
+            self.Y += dy
+            self.X += dx
+        return (self.Y,self.X)
+
+    def move_wrap(self, dy, dx, wall=None):
+        ny = (self.Y + dy) % self.h
+        nx = (self.X + dx) % self.w
+        if self.in_bounds(ny, nx, wall):
+            self.Y = ny
+            self.X = nx
+        return self.Y, self.X
+        
+    @staticmethod
+    def manhattan(y1, x1, y2, x2):
+        return abs(y1 - y2) + abs(x1 - x2)
+    # =================================
+    # BFS
+    # =================================
+
+    def bfs(self, sy, sx, wall=None):
+        from collections import deque
+        dist = [
+            [-1] * self.w
+            for _ in range(self.h)
+        ]
+        q = deque([(sy, sx)])
+        dist[sy][sx] = 0
+        while q:
+            y, x = q.popleft()
+            for ny, nx in self.around(y, x):
+                if self.g[ny][nx] == wall:
+                    continue
+                if dist[ny][nx] != -1:
+                    continue
+                dist[ny][nx] = dist[y][x] + 1
+                q.append((ny, nx))
+        return dist
+
+    # =================================
+    # transform
+    # =================================
+
+    def rot90(self, k=1):
+        k %= 4
+        g = [row[:] for row in self.g]
+        for _ in range(k):
+            g = [list(row) for row in zip(*g)][::-1]
+        return Grid(g)
+
+    def T(self):
+        return Grid([
+            list(row)
+            for row in zip(*self.g)
+        ])
+
+    # =================================
+    # output
+    # =================================
+
+    def show(self, sep=""):
+        for row in self.g:
+            print(*row, sep=sep)
+
+'''
+g = Grid([list(input()) for _ in range(h)])
+g = Grid([[0] * w for _ in range(h)])
+g = Grid([["."] * w for _ in range(h)])
+
+空グリッドから生成
+g = Grid(h=3, w=4, fill=0)
+
+作成
+配列から生成
+kg = Grid([list(input()) for _ in range(h)])
+g = Grid(h=h, w=w, fill=".")
+
+要素アクセス
+v = g[y, x]
+g[y, x] = "#"
+
+サイズ
+g.h
+g.w
+
+全探索
+for y, x in g:
+for y, x, v in g.cells():
+    print(y, x, v)
+
+...
+範囲判定
+g.in_bounds(y, x, wall="#")
+
+トーラス
+g.setxy(y,x)
+y,x = g.move_wrap(0,1)
+
+検索
+walls = g.find("#")
+
+条件検索
+for y, x in g.where(lambda v: v.isdigit()):
+
+Sを探す
+sy, sx = g.find_one("S")
+
+4近傍
+for ny, nx in g.neighbors(y, x):
+g[y, x] = sum(1 for _ in g.neighbors(y, x))
+
+...
+
+8近傍
+for ny, nx in g.neighbors(y, x, g.DIR8):
+...
+
+個数
+cnt = g.count("#")
+
+周囲をみる around(y,x,dirs)
+if not any(g[ny, nx] == "#" for ny, nx in g.around(y, x)):
+    print("No")
+    exit()
+...
+最小矩形
+t, b, l, r = g.bounding_box("#")
+
+for y in range(t, b + 1):
+    print("".join(g[y, l:r + 1]))
+
+右方向5文字を取る。
+for y, x in g:
+    s = "".join(
+        g[ny, nx]
+        for ny, nx in g.line(y, x, 0, 1, 4)
+    )
+...
+
+BFS
+dist = g.bfs(sy, sx)
+
+方向
+d = 0
+d = Grid.rot_dir(d, 1)
+d = Grid.rot_dir(d, -1)
+
+移動
+y,x = g.move(dy, dx, wall="#")
+g.move(0,-1)
+
+トーラス移動
+ABC339B
+dy, dx = Grid.DIR4[d]
+y, x = g.move_wrap(dy, dx)
+
+回転
+g2 = g.rot90()
+g2 = g.rot90(2)
+
+転置
+g2 = g.T()
+
+表示
+g.show()
+'''
