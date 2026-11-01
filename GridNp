@@ -1,0 +1,874 @@
+#AtCoder用 参照URL
+#https://github.com/asuwata/Grid/blob/main/GridNp
+
+import numpy as np
+
+
+class Grid:
+    # ↑ → ↓ ←
+    DIR4 = [
+        (-1, 0),
+        (0, 1),
+        (1, 0),
+        (0, -1)
+    ]
+
+    DIR8 = DIR4 + [
+        (-1, -1),
+        (-1, 1),
+        (1, 1),
+        (1, -1)
+    ]
+
+    def __init__(self, grid=None, h=None, w=None, fill=".", dtype=None):
+        if grid is not None:
+            self.g = np.asarray(grid, dtype=dtype)
+        else:
+            if h is None or w is None:
+                raise ValueError("h and w are required")
+            self.g = np.full((h, w), fill, dtype=dtype)
+
+        if self.g.ndim != 2:
+            raise ValueError("Grid must be 2-dimensional")
+
+        self.h, self.w = self.g.shape
+        self.Y, self.X = 0, 0
+
+    # =================================
+    # iterable
+    # =================================
+
+    def __iter__(self):
+        return iter(np.ndindex(self.h, self.w))
+
+    def cells(self):
+        for y, x in self:
+            yield y, x, self.g[y, x]
+
+    # =================================
+    # access
+    # =================================
+
+    def __getitem__(self, key):
+        return self.g[key]
+
+    def __setitem__(self, key, value):
+        self.g[key] = value
+
+    # =================================
+    # basic
+    # =================================
+
+    # 最小矩形
+    def bounding_box(self, value):
+        ys, xs = np.where(self.g == value)
+
+        if ys.size == 0:
+            return None
+
+        return (
+            int(ys.min()),
+            int(ys.max()),
+            int(xs.min()),
+            int(xs.max())
+        )
+
+    # 範囲判定
+    def in_bounds(self, y, x, wall=None):
+        return (
+            0 <= y < self.h
+            and 0 <= x < self.w
+            and (wall is None or self.g[y, x] != wall)
+        )
+
+    # トーラス座標
+    def wrap(self, y, x):
+        return y % self.h, x % self.w
+
+    # =================================
+    # search
+    # =================================
+
+    # 個数
+    def count(self, value):
+        return int(np.count_nonzero(self.g == value))
+
+    # 対角線
+    def diag_count(self, value, k=1):
+        if k == 1:
+            a = np.diag(self.g)
+        else:
+            a = np.diag(np.fliplr(self.g))
+
+        return int(np.count_nonzero(a == value))
+
+    # 全検索
+    def find(self, value):
+        return [
+            tuple(map(int, p))
+            for p in np.argwhere(self.g == value)
+        ]
+
+    # 最初の1個
+    def find_one(self, value):
+        pos = np.argwhere(self.g == value)
+
+        if pos.size == 0:
+            return None
+
+        return tuple(map(int, pos[0]))
+
+    # 条件検索
+    def where(self, cond):
+        mask = np.vectorize(cond, otypes=[bool])(self.g)
+        return [
+            tuple(map(int, p))
+            for p in np.argwhere(mask)
+        ]
+
+    # =================================
+    # movement
+    # =================================
+
+    def neighbors(self, y, x, dirs=None, dist=1, wall=None):
+        if dirs is None:
+            dirs = self.DIR4
+
+        for dy, dx in dirs:
+            ny = y + dy * dist
+            nx = x + dx * dist
+
+            if self.in_bounds(ny, nx, wall):
+                yield ny, nx
+
+    def around(self, y, x, dirs=None):
+        if dirs is None:
+            dirs = self.DIR4
+
+        for dy, dx in dirs:
+            ny = y + dy
+            nx = x + dx
+
+            if 0 <= ny < self.h and 0 <= nx < self.w:
+                yield ny, nx
+
+    def line(self, y, x, dy, dx, dist=None):
+        k = 1
+
+        while True:
+            if dist is not None and k > dist:
+                break
+
+            ny = y + dy * k
+            nx = x + dx * k
+
+            if not self.in_bounds(ny, nx):
+                break
+
+            yield ny, nx
+            k += 1
+
+    def ray(self, y, x, dirs=None, dist=None):
+        if dirs is None:
+            dirs = self.DIR4
+
+        return [
+            list(self.line(y, x, dy, dx, dist))
+            for dy, dx in dirs
+        ]
+
+    def ray_val(self, y, x, dirs=None, dist=None):
+        return [
+            [self.g[ny, nx] for ny, nx in line]
+            for line in self.ray(y, x, dirs, dist)
+        ]
+
+    # =================================
+    # simulation
+    # =================================
+
+    @staticmethod
+    def rot_dir(d, k=1):
+        return (d + k) % 4
+
+    def setxy(self, y, x):
+        self.Y, self.X = y, x
+
+    def move(self, dy, dx, wall=None):
+        ny = self.Y + dy
+        nx = self.X + dx
+
+        if self.in_bounds(ny, nx, wall):
+            self.Y, self.X = ny, nx
+
+        return self.Y, self.X
+
+    # トーラス移動
+    def move_wrap(self, dy, dx, wall=None):
+        ny, nx = self.wrap(self.Y + dy, self.X + dx)
+
+        if self.in_bounds(ny, nx, wall):
+            self.Y, self.X = ny, nx
+
+        return self.Y, self.X
+
+    # マンハッタン距離
+    @staticmethod
+    def manhattan(y1, x1, y2, x2):
+        return abs(y1-y2) + abs(x1-x2)
+
+    # =================================
+    # transform
+    # =================================
+
+    # 90度回転
+    def rot90(self, k=1):
+        return Grid(np.rot90(self.g, k).copy())
+
+    # 転置
+    def T(self):
+        return Grid(self.g.T.copy())
+
+    # =================================
+    # NumPy extended
+    # =================================
+
+    # 条件マスク
+    def mask(self, value):
+        return self.g == value
+
+    # 条件マスクから座標取得
+    def find_mask(self, mask):
+        return [
+            tuple(map(int, p))
+            for p in np.argwhere(mask)
+        ]
+
+    # 行・列ごとの個数
+    def count_axis(self, value, axis=1):
+        return np.count_nonzero(self.g == value, axis=axis)
+
+    # 条件に合う座標を取得
+    def find_all(self, cond):
+        mask = np.vectorize(cond, otypes=[bool])(self.g)
+        return self.find_mask(mask)
+
+    # 重複を除いた値と個数
+    def unique(self):
+        return np.unique(self.g, return_counts=True)
+
+    # 行を取得
+    def row(self, y):
+        return self.g[y, :]
+
+    # 列を取得
+    def col(self, x):
+        return self.g[:, x]
+
+    # 周囲を追加
+    def pad(self, n=1, value="."):
+        a = np.pad(
+            self.g,
+            n,
+            mode="constant",
+            constant_values=value
+        )
+        return Grid(a)
+
+    # 上下反転
+    def flipud(self):
+        return Grid(np.flipud(self.g).copy())
+
+    # 左右反転
+    def fliplr(self):
+        return Grid(np.fliplr(self.g).copy())
+
+    # 回転（rot90の別名）
+    def rotate(self, k=1):
+        return self.rot90(k)
+
+    # 条件に合う要素の一括置換
+    def replace(self, old, new):
+        a = self.g.copy()
+        a[a == old] = new
+        return Grid(a)
+
+    # 全要素を指定値で置換
+    def fill(self, value):
+        self.g.fill(value)
+        return self
+
+    # 配列のコピー
+    def copy(self):
+        return Grid(self.g.copy())
+
+    # =================================
+    # output
+    # =================================
+
+    def show(self, sep=""):
+        for row in self.g:
+            print(*row, sep=sep)
+
+'''
+# Grid_numpy リファレンス
+
+AtCoderのグリッド問題向けに作成したNumPyベースのGridクラスです。
+
+内部データに `numpy.ndarray` を使用し、従来のGridの便利なメソッドとNumPyの配列演算を組み合わせて使用できます。
+
+BFS・DFSなどの探索アルゴリズムは別テンプレートとして管理します。
+
+## 1. インポート
+
+```python
+import numpy as np
+from Grid_numpy import Grid
+```
+
+## 2. Gridの生成
+
+### 配列から生成
+
+```python
+g = Grid([list(input()) for _ in range(h)])
+```
+
+整数配列も使用できます。
+
+```python
+g = Grid([[0, 1, 2], [3, 4, 5]])
+```
+
+### 空のGridを生成
+
+```python
+g = Grid(h=3, w=4, fill=".")
+g = Grid(h=3, w=4, fill=0)
+```
+
+### データ型を指定
+
+```python
+g = Grid(grid, dtype=int)
+g = Grid(grid, dtype=object)
+```
+
+内部データは常にNumPyの `ndarray` です。
+
+```python
+type(g.g)
+# numpy.ndarray
+```
+
+## 3. サイズ
+
+| 属性 | 内容 |
+|---|---|
+| `g.h` | 高さ |
+| `g.w` | 幅 |
+| `g.g` | NumPy配列 |
+| `g.Y` | 現在位置のY座標 |
+| `g.X` | 現在位置のX座標 |
+
+```python
+h = g.h
+w = g.w
+```
+
+## 4. 要素アクセス
+
+NumPy標準のインデックス・スライスを使用できます。
+
+```python
+# 1要素
+v = g[y, x]
+
+# 代入
+g[y, x] = "#"
+
+# 1行
+a = g[y, :]
+
+# 1列
+a = g[:, x]
+
+# 部分配列
+a = g[y1:y2, x1:x2]
+```
+
+NumPyのマスク処理も使用できます。
+
+```python
+# "#" の位置
+mask = g.g == "#"
+
+# "." をすべて "o" に変更
+g.g[g.g == "."] = "o"
+```
+
+※スライスはビューを返すため、取得した配列の変更が元のGridに反映される場合があります。
+
+## 5. 全セル走査
+
+### 座標を取得
+
+```python
+for y, x in g:
+    print(y, x)
+```
+
+### 座標と値を取得
+
+```python
+for y, x, v in g.cells():
+    print(y, x, v)
+```
+
+## 6. 範囲判定・座標操作
+
+### in_bounds(y, x, wall=None)
+
+座標が範囲内か判定します。
+
+```python
+g.in_bounds(y, x)
+g.in_bounds(y, x, wall="#")
+```
+
+戻り値：`True / False`
+
+### wrap(y, x)
+
+トーラス状の座標に変換します。
+
+```python
+ny, nx = g.wrap(y, x)
+```
+
+範囲外の座標も剰余演算で範囲内に戻します。
+
+## 7. 検索・集計
+
+### count(value)
+
+指定値の個数を取得します。
+
+```python
+cnt = g.count("#")
+```
+
+内部では `np.count_nonzero()` を使用します。
+
+### diag_count(value, k=1)
+
+対角線上にある指定値の個数を取得します。
+
+```python
+g.diag_count(".", k=1)  # 右下方向
+g.diag_count(".", k=2)  # 左下方向
+```
+
+### find(value)
+
+指定値の座標をすべて取得します。
+
+```python
+walls = g.find("#")
+```
+
+戻り値：
+
+```python
+[(0, 2), (1, 3), (3, 1)]
+```
+
+### find_one(value)
+
+最初に見つかった座標を取得します。
+
+```python
+pos = g.find_one("S")
+```
+
+見つからない場合は `None` を返します。
+
+### where(cond)
+
+条件に一致する座標を取得します。
+
+```python
+pos = g.where(lambda v: v.isdigit())
+```
+
+戻り値は `find()` と同じ形式です。
+
+### bounding_box(value)
+
+指定値を含む最小矩形の範囲を取得します。
+
+```python
+t, b, l, r = g.bounding_box("#")
+```
+
+戻り値：
+
+```python
+(top, bottom, left, right)
+```
+
+見つからない場合は `None` です。
+
+## 8. 移動・近傍
+
+### DIR4
+
+4方向の移動ベクトルです。
+
+```python
+# ↑ → ↓ ←
+Grid.DIR4
+```
+
+### DIR8
+
+8方向の移動ベクトルです。
+
+```python
+Grid.DIR8
+```
+
+### neighbors(y, x, dirs=None, dist=1, wall=None)
+
+指定座標から移動可能な隣接座標を取得します。
+
+```python
+for ny, nx in g.neighbors(y, x):
+    print(ny, nx)
+```
+
+8方向の場合：
+
+```python
+for ny, nx in g.neighbors(y, x, Grid.DIR8):
+    print(ny, nx)
+```
+
+距離を指定：
+
+```python
+g.neighbors(y, x, dist=2)
+```
+
+壁を指定：
+
+```python
+g.neighbors(y, x, wall="#")
+```
+
+### around(y, x, dirs=None)
+
+範囲内にある周囲の座標を取得します。
+
+```python
+for ny, nx in g.around(y, x):
+    print(ny, nx)
+```
+
+`neighbors()` と異なり、壁の判定は行いません。
+
+### line(y, x, dy, dx, dist=None)
+
+指定方向の座標を順番に取得します。
+
+```python
+for ny, nx in g.line(y, x, 0, 1, 4):
+    print(g[ny, nx])
+```
+
+壁または盤面の端に到達すると終了します。
+
+### ray(y, x, dirs=None, dist=None)
+
+複数方向の座標を取得します。
+
+```python
+lines = g.ray(y, x)
+```
+
+### ray_val(y, x, dirs=None, dist=None)
+
+複数方向の値を取得します。
+
+```python
+values = g.ray_val(y, x)
+```
+
+## 9. 移動シミュレーション
+
+### rot_dir(d, k=1)
+
+方向を回転します。
+
+```python
+d = 0
+d = Grid.rot_dir(d, 1)   # 右回転
+d = Grid.rot_dir(d, -1)  # 左回転
+```
+
+### setxy(y, x)
+
+現在位置を設定します。
+
+```python
+g.setxy(y, x)
+```
+
+### move(dy, dx, wall=None)
+
+現在位置から移動します。
+
+```python
+y, x = g.move(0, 1)
+```
+
+壁を指定することもできます。
+
+```python
+y, x = g.move(0, 1, wall="#")
+```
+
+移動できない場合は現在位置を維持します。
+
+### move_wrap(dy, dx, wall=None)
+
+トーラス状に移動します。
+
+```python
+g.setxy(y, x)
+y, x = g.move_wrap(0, 1)
+```
+
+### manhattan(y1, x1, y2, x2)
+
+マンハッタン距離を計算します。
+
+```python
+d = Grid.manhattan(y1, x1, y2, x2)
+```
+
+## 10. NumPy拡張メソッド
+
+### mask(value)
+
+指定値の位置をTrueにしたbool配列を返します。
+
+```python
+m = g.mask("#")
+```
+
+### find_mask(mask)
+
+bool配列からTrueの座標を取得します。
+
+```python
+pos = g.find_mask(g.g == "#")
+```
+
+### find_all(cond)
+
+条件に一致する座標をすべて取得します。
+
+```python
+pos = g.find_all(lambda v: v.isdigit())
+```
+
+### count_axis(value, axis=1)
+
+行または列ごとに指定値の個数を数えます。
+
+```python
+# 各行の個数
+a = g.count_axis("#", axis=1)
+
+# 各列の個数
+a = g.count_axis("#", axis=0)
+```
+
+### unique()
+
+配列内の重複しない値と個数を取得します。
+
+```python
+values, counts = g.unique()
+```
+
+内部では `np.unique()` を使用します。
+
+### row(y)
+
+指定行を取得します。
+
+```python
+a = g.row(y)
+```
+
+### col(x)
+
+指定列を取得します。
+
+```python
+a = g.col(x)
+```
+
+### pad(n=1, value=".")
+
+周囲に指定値を追加した新しいGridを返します。
+
+```python
+g2 = g.pad(1, "#")
+```
+
+元のGridは変更しません。
+
+### flipud()
+
+上下反転したGridを返します。
+
+```python
+g2 = g.flipud()
+```
+
+### fliplr()
+
+左右反転したGridを返します。
+
+```python
+g2 = g.fliplr()
+```
+
+### rot90(k=1)
+
+90度単位で回転したGridを返します。
+
+```python
+g2 = g.rot90()
+g2 = g.rot90(2)
+g2 = g.rot90(3)
+```
+
+### rotate(k=1)
+
+`rot90()` と同じ機能です。
+
+```python
+g2 = g.rotate(1)
+```
+
+### T()
+
+転置したGridを返します。
+
+```python
+g2 = g.T()
+```
+
+### replace(old, new)
+
+指定値を別の値に置換した新しいGridを返します。
+
+```python
+g2 = g.replace("#", ".")
+```
+
+元のGridは変更しません。
+
+### fill(value)
+
+配列全体を指定値で埋めます。
+
+```python
+g.fill(".")
+```
+
+元のGridを変更します。
+
+### copy()
+
+Gridのコピーを作成します。
+
+```python
+g2 = g.copy()
+```
+
+## 11. 表示
+
+### show(sep="")
+
+Gridを表示します。
+
+```python
+g.show()
+```
+
+区切り文字を指定：
+
+```python
+g.show(" ")
+```
+
+## 12. 使用例
+
+### ABCなどのグリッド問題
+
+```python
+h, w = map(int, input().split())
+g = Grid([list(input()) for _ in range(h)])
+
+# Sの位置
+sy, sx = g.find_one("S")
+
+# 壁の個数
+print(g.count("#"))
+
+# Sの周囲の空きマス
+cnt = sum(
+    g[ny, nx] == "."
+    for ny, nx in g.neighbors(sy, sx, wall="#")
+)
+
+# 表示
+g.show()
+```
+
+### NumPyによる一括処理
+
+```python
+# "#" の座標
+pos = np.argwhere(g.g == "#")
+
+# 各行の "#" の個数
+row_count = np.count_nonzero(g.g == "#", axis=1)
+
+# "#" をすべて "." に変更
+g.g[g.g == "#"] = "."
+
+# 上下左右反転
+a = np.flipud(np.fliplr(g.g))
+```
+
+## 13. 注意事項
+
+1. 内部配列 `g.g` はNumPyのndarrayです。
+2. スライスは基本的にビューを返します。必要に応じて `.copy()` を使用してください。
+3. 文字列配列は固定長の文字列型になります。異なる長さの文字列を格納する場合は `dtype=object` を指定してください。
+4. `pad()`、`rot90()`、`T()`、`flipud()`、`fliplr()` などは新しいGridを返します。
+5. `fill()` は元のGridを直接変更します。
+6. BFS・DFSは本クラスには含みません。別途テンプレートを使用してください。
+
+---
+
+**Grid_numpy**
+
+従来のGridの使いやすさとNumPyの配列演算を組み合わせた、AtCoder向けグリッド操作クラスです。
+'''
